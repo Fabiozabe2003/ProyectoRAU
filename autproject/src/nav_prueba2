@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import rospy
+import numpy as np
+from sensor_msgs.msg import LaserScan
+#from autlab2.msg import ArrayXY
+from autproject.msg import Camdet
+from nav_msgs.msg import Odometry
+from std_msgs.msg import Float64
+from geometry_msgs.msg import Twist
+import tf
+import time
+import random
+
+class Obj_det(object):
+  def __init__(self):
+    self.detection = Camdet()
+  	
+  	
+  	# Nodo suscriptor al topico obj_detection
+    self.sub = rospy.Subscriber("detection",Camdet,self.callback)
+  	
+    rospy.sleep(1)
+  	
+  	
+  def callback(self,msg):
+    self.detection = msg
+      
+
+  def get_detection(self):
+  	return self.detection.det
+
+  
+class Lidar(object):
+  
+  def __init__(self):
+    self.escaneo = LaserScan()
+   	
+  
+    # Crear el suscriptor al tópico del LiDAR
+    self.sub = rospy.Subscriber("scan",LaserScan,self.callback)
+    
+    # Publicador a lidar_xy
+    #self.pub = rospy.Publisher("lidar_xy",ArrayXY, queue_size = 1)
+
+
+    # Esperar 1 segundo
+    rospy.sleep(1)
+    
+    # Precalcular un vector de numpy que contenga los ángulos para cada
+    # rango. Se puede usar numpy.arange, por ejemplo
+  
+    self.rangos = np.arange(len(self.escaneo.ranges))  
+
+
+    # Almacenar los rangos máximo y mínimo que puede leer el LiDAR
+    self.ranmax = self.escaneo.range_max
+    self.ranmin = self.escaneo.range_min
+    self.paso = self.escaneo.angle_increment
+    
+
+  def callback(self, msg):
+    # Callback para el suscriptor
+    self.escaneo = msg
+
+        
+  def get_xy(self):
+    """ Retorna los valores x,y de la medición, en el sistema del LiDAR
+    """ 
+    # Obtener los rangos medidos
+    self.rangos = self.escaneo.ranges
+    x = []
+    y = []   
+    angulo = 0
+    for i in (self.rangos):
+        if (i<=self.ranmax and i>= self.ranmin):
+    	 # Convertir los rangos válidos en x, y
+            x.append(np.cos(angulo)*i)
+            y.append(np.sin(angulo)*i)
+        angulo += self.paso
+ 
+    return x,y
+    
+    
+            
+  def get_xy_inrange(self):
+      """Retorna los valores x,y de la medición, en el sistema del LiDAR"""
+      # Obtener los rangos medidos
+      self.rangos = self.escaneo.ranges
+      x = []
+      y = []
+      ang = []
+      angulo = 0
+      angmax1 = np.deg2rad(60)
+      angmin1 = np.deg2rad(0)
+      angmax2 = np.deg2rad(360)
+      angmin2 = np.deg2rad(300)
+      
+      for i in self.rangos:
+          if i <= self.ranmax and i >= self.ranmin:
+              # Convertir los rangos válidos en x, y
+              if (angulo >= angmin1 and angulo <= angmax1) or (angulo >= angmin2 and angulo <= angmax2):
+                  # Delimitar el rango del robot
+                  x.append(np.cos(angulo) * i)
+                  y.append(np.sin(angulo) * i)
+                  ang.append(angulo)
+          angulo += self.paso
+
+      return x, y, ang
+
+  def get_x_inrange(self):
+      """Retorna los valores x en el sistema del LiDAR"""
+      # Obtener los rangos medidos
+      self.rangos = self.escaneo.ranges
+      x = []
+      y = []
+      ang = []
+      angulo = 0
+      angmax1 = np.deg2rad(7.5)
+      angmin1 = np.deg2rad(0)
+      angmax2 = np.deg2rad(360)
+      angmin2 = np.deg2rad(352.5)
+      rangows=[]
+      for i in self.rangos:
+          if i <= self.ranmax and i >= self.ranmin:
+              # Convertir los rangos válidos en x, y
+              if (angulo >= angmin1 and angulo <= angmax1) or (angulo >= angmin2 and angulo <= angmax2):
+                  # Delimitar el rango del robot
+                  rangows.append(i)
+          angulo += self.paso
+      return min(rangows)
+  
+  def get_x(self):
+    """ Retorna el valor de la medición en el sistema del LiDAR
+    """
+    # Obtener los rangos medidos
+    self.rangos = self.escaneo.ranges
+    x = self.rangos[0]
+    return x
+
+
+class Odometria(object):
+    def __init__(self):
+       self.sub = rospy.Subscriber("odom", Odometry ,self.callback)
+     # Completar
+
+       # Esperar 1 segundo
+       rospy.sleep(1)  
+       self.xyz = self.odometria.pose.pose.position
+       self.quat = self.odometria.pose.pose.orientation
+
+    def callback(self,msg):
+        self.odometria = msg
+
+    def get_posicion_inercial(self):
+
+        self.xyz = self.odometria.pose.pose.position
+        self.quat = self.odometria.pose.pose.orientation    
+
+        T = np.eye(4)
+        rospy.sleep(0.5)
+        rot = np.array([self.quat.x, self.quat.y, self.quat.z, self.quat.w])
+        trans = np.array([self.xyz.x, self.xyz.y, self.xyz.z])
+        T[0:3,0:3] = rotFromQuat(rot)
+        T[0:3,3] = trans
+    
+        # Retorna la transformación homogénea del robot con respecto al sistema inercial
+        xo = T[0,3]     # x en sistema odom
+        yo = T[1,3]     # y en el sistema odom
+        Rot = T[:3, :3]
+        R11 = Rot[0, 0]
+        R21 = Rot[1, 0]
+        # Calculate the angle using arctan2
+        theta = np.rad2deg(np.arctan2(R21, R11))
+        return xo,yo,theta
+        
+
+
+class Clase_movimiento():
+	def __init__(self):
+		topic='cmd_vel' 
+		self.pub = rospy.Publisher(topic,Twist,queue_size=1)
+	
+
+def rotFromQuat(q):
+  """ q = [ex, ey, ez, ew]
+  """
+  return np.array([[2.*(q[3]**2+q[0]**2)-1., 2.*(q[0]*q[1]-q[3]*q[2]), 2.*(q[0]*q[2]+q[3]*q[1])],
+                   [2.*(q[0]*q[1]+q[3]*q[2]), 2.*(q[3]**2+q[1]**2)-1., 2.*(q[1]*q[2]-q[3]*q[0])],
+                   [2.*(q[0]*q[2]-q[3]*q[1]), 2.*(q[1]*q[2]+q[3]*q[0]), 2.*(q[3]**2+q[2]**2)-1.]])
+
+
+def Tlidar_wrt_base():
+  """
+  Sistema del lidar con respecto a base_link (la base del robot)
+  """
+  tflistener = tf.TransformListener()
+  T = np.eye(4)
+  rospy.sleep(0.5)
+  try:
+    (trans, rot) = tflistener.lookupTransform('base_link', 'base_scan', rospy.Time(0))
+    T[0:3,0:3] = rotFromQuat(rot)
+    T[0:3,3] = trans
+  except:
+    pass
+  # Retorna la transformación homogénea del sistema del LiDAR con respecto al
+  # sistema de base del robot.
+  return T
+
+
+if __name__ == "__main__":
+
+
+  # vector con coordenaadas
+  coords = []
+  n_objetos = 0
+
+  # inicializamos nodo
+  rospy.init_node('nodo_obstaculos')
+  pub_class = Clase_movimiento()
+  twist = Twist()
+
+  # objeto obj det
+  obj_d = Obj_det()
+  
+  # objeto lidar
+  lidar = Lidar()
+
+  # Objeto para odometria
+  odom_sub = Odometria()
+
+
+  # Transformación del sistema del LiDAR al sistema del Robot
+  T_BL = Tlidar_wrt_base()
+
+  # Tiempo de ejecución del bucle (en Hz)
+  rate = rospy.Rate(20)
+  while not (rospy.is_shutdown()):
+    
+	
+    # Coordenadas en el sistema del LiDAR
+    x, y, ang= lidar.get_xy_inrange()
+    # Conversión a coordenadas homogéneas
+    P = np.ones((4, len(x)))
+    P[0,:] = x
+    P[1,:] = y
+                
+    
+    # Conversión de las coordenadas del sistema del LiDAR al sistema del Robot
+    P_robot = T_BL.dot(P)
+    xr = P_robot[0,:]     # x en sistema del robot
+    yr = P_robot[1,:]     # y en el sistema del robot
+ 
+    
+    avanza_flag = 1
+    
+  
+    for i in range(len(xr)):
+      distancia = np.sqrt(xr[i]**2 + yr[i]**2)
+      if distancia < 0.4:
+          twist.linear.x = 0
+          twist.angular.z = 0
+          pub_class.pub.publish(twist)
+          # Si el obstaculo esta a la der, gira a en sentido contrario
+          
+          twist.angular.z = 0.05
+          pub_class.pub.publish(twist)
+          avanza_flag = 0
+      # print("Deteccion a:", distancia, "en el angulo:", np.rad2deg(ang[i]))
+    	#print("Deteccion a:", distancia, "en el angulo:",np.rad2deg(ang[i]))	
+
+
+    if avanza_flag:
+            # Detiene el giro pues ya no hay obstaculo
+            twist.angular.z = 0
+            pub_class.pub.publish(twist)
+            twist.linear.x = 0.04
+            pub_class.pub.publish(twist)
+            # print("Sin obstaculo, avanzando ")
+
+            #deteccion del objeto
+
+            
+            ancho_tot=obj_d.get_detection()[5]
+            
+            
+            repetido=False
+
+            if obj_d.get_detection()[0]!=0:
+              print("detecto != 0")
+              # FALTA DEFINIR EL NOMBRE DEL OBJETO SEGUN LA DETECCIO
+              if (obj_d.get_detection()[0]==1) :
+                nombre = "CUP"
+              elif (obj_d.get_detection()[0]==2):
+                nombre = "CAN"
+              elif (obj_d.get_detection()[0]==3):
+                nombre = "BOTTLE"
+
+              for objetos in coords:
+                if nombre in objetos:
+                  repetido=True
+            else:
+              reptido=True
+              print("else")
+              
+            if (not repetido) :
+
+                # detener movimiento para que detecte 
+                twist.angular.z = 0
+                twist.linear.x = 0
+
+                start_time = time.time()  # Initialize the timer
+                while time.time() - start_time <= 3:
+                    rate.sleep()
+
+
+
+
+                print("Detectado")
+                print(obj_d.get_detection())
+                error =  ancho_tot/2 - obj_d.get_detection()[1]
+                print("Error de posicion:", error)
+                sentido_giro = np.sign(error)
+                start_time = time.time()  # Initialize the timer
+                
+                #while(abs(error) > 15):
+                while(time.time() - start_time) <= 2:
+                    print("Error:",error)
+                    #twist.linear.x=0.05
+                    twist.angular.z = sentido_giro*0.05     
+                    pub_class.pub.publish(twist)
+                    error =  ancho_tot/2 - obj_d.get_detection()[1]
+                    rate.sleep()
+                twist.angular.z=0
+                twist.linear.x=0
+                pub_class.pub.publish(twist)
+                distancia = lidar.get_x_inrange()
+                x,y,th = odom_sub.get_posicion_inercial()
+                print("Objeto encontrado a ",distancia)
+                print("Robot en:",x,y,th)
+                x_obj = x + distancia*np.cos(np.deg2rad(th))
+                y_obj = y + distancia*np.sin(np.deg2rad(th))
+                xy= []
+                # GUARDAR EL NOMBRE DEL OBJETO DEFINIDO 
+                xy.append(nombre)
+                xy.append(x_obj)
+                xy.append(y_obj) 
+                coords.append(xy)
+                n_objetos+=1
+
+                
+                print("Coords:",coords)
+                print("Objeto en:",x_obj,y_obj)
+            
+
+                signo = random.choice([-1,1])
+                start_time = time.time()  # Initialize the timer
+                while time.time() - start_time <= 5:
+                    twist.angular.z = 0.2*signo  # Rotate positively in z-axis
+                    pub_class.pub.publish(twist)
+                    rate.sleep()
+
+                # Stop the rotation after 4 seconds
+                twist.angular.z = 0
+                twist.linear.x = 0
+                pub_class.pub.publish(twist)
+
+                if (n_objetos == 2):
+                  obj = {}
+                  for i in coords:
+                    nombre = i[0]
+                    x = i[1]  
+                    y = i[2]  
+                    obj[nombre] = f'"{nombre}" = "{x} {y} 0 0 0 0 1 map {nombre} 100"'
+                  obj_values = list(obj.values())
+                  # Guardar valor
+                  np.savetxt("identified_points.txt", obj_values, fmt='%s')
+                  print("Guardado")
+                  break
+
+
+	    		
+    # Esperar
+    rate.sleep()
+
+  # Pasar al txt
+  print("Fin del programa")
