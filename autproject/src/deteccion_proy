@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+
+import rospy
+import cv2
+import numpy as np
+from sensor_msgs.msg import Image
+from autproject.msg import Camdet
+from cv_bridge import CvBridge
+from ultralytics import YOLO
+
+class Cam(object):
+    def __init__(self, topic_name="camera_frame"):
+        self.bridge = CvBridge()
+        self.image = np.zeros((10,10,3))
+        self.sub = rospy.Subscriber(topic_name, Image, self.image_callback)
+        self.pub = rospy.Publisher("detection", Camdet, queue_size=1)
+
+    def image_callback(self, img):
+        self.image = self.bridge.imgmsg_to_cv2(img, "bgr8")
+
+    def get_image(self):
+        return self.image
+    
+    def get_image_size(self):
+        return self.image.shape
+
+if __name__ == "__main__":
+    rospy.init_node('camera_node')
+
+    #topic_name = "/camera/rgb/image_raw"
+    topic_name = "/usb_cam/image_raw"
+    cam = Cam(topic_name)
+
+    # Cargar el modelo YOLOv8 pre-entrenado
+    model = YOLO('/home/utec/proyecto/src/autlabs/autproject/src/tazas_latas_botellas.pt')  # Cambia a la ruta del modelo YOLOv8 adecuado
+
+    freq = 20
+    rate = rospy.Rate(freq)
+
+    while not rospy.is_shutdown():
+        I = cam.get_image()
+
+        # Convertir la imagen a formato esperado por YOLOv8
+        results = model(I)
+        array_sub = Camdet()
+        # Convertir la imagen a formato esperado por YOLOv8
+        results = model.predict(I)
+
+        # Procesar los resultados para detección de objetos
+        detections = results[0].boxes  # Obtener detecciones en formato (x1, y1, x2, y2, conf, cls)
+        array_sub.det = np.array([0, 0, 0, 0, 0, int(cam.get_image_size()[1])])
+        array_sub1 = np.array([0, 0, 0, 0, 0, int(cam.get_image_size()[1])])
+        array_sub2 = np.array([0, 0, 0, 0, 0, int(cam.get_image_size()[1])])
+        array_sub3 = np.array([0, 0, 0, 0, 0, int(cam.get_image_size()[1])])
+        if len(detections) > 0:
+            # Dibujar las cajas delimitadoras y etiquetas en el frame
+            for result in results:
+                boxes = result.boxes
+                for box in boxes:
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    conf = box.conf.item()
+                    cls = box.cls.item()
+                    class_name = model.names[int(cls)]  # Obtener el nombre de la clase a partir del índice
+                    print(class_name, "  " ,conf)
+                    x_center = (x1 + x2) / 2
+                    y_center = (y1 + y2) / 2
+                    width = x2 - x1
+                    height = y2 - y1
+                    
+                    if class_name == 'taza' and (int(cam.get_image_size()[1]) - int(width)) > 50 and conf > 0.7:
+                        color = (0, 255, 0)  # Cambiar el color según la clase
+                        array_sub1 = np.array([1, int(x_center), int(y_center), int(width), int(height), int(cam.get_image_size()[1])])
+                        array_sub.det = np.array([1, int(x_center), int(y_center), int(width), int(height), int(cam.get_image_size()[1])])
+                        cv2.rectangle(I, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+                        cv2.putText(I, f'{class_name} {conf:.2f}', (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+                    if class_name == 'can2' and (int(cam.get_image_size()[1]) - int(width)) > 50 and conf > 0.6:
+                        color = (255, 0, 0)  # Cambiar el color según la clase
+                        cv2.rectangle(I, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+                        cv2.putText(I, f'{class_name} {conf:.2f}', (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+                        array_sub.det = np.array([2, int(x_center), int(y_center), int(width), int(height), int(cam.get_image_size()[1])])
+                        array_sub2 = np.array([2, int(x_center), int(y_center), int(width), int(height), int(cam.get_image_size()[1])])
+                    if class_name == 'bottle' and (int(cam.get_image_size()[1]) - int(width)) > 50 and conf > 0.8:
+                        color = (0, 0, 255)  # Cambiar el color según la clase
+                        cv2.rectangle(I, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+                        cv2.putText(I, f'{class_name} {conf:.2f}', (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+                        array_sub.det = np.array([3, int(x_center), int(y_center), int(width), int(height), int(cam.get_image_size()[1])])
+                        array_sub3 = np.array([3, int(x_center), int(y_center), int(width), int(height), int(cam.get_image_size()[1])])
+
+        #print(array_sub)
+        #print(array_sub2)
+        #print(array_sub3)
+        
+        cam.pub.publish(array_sub)
+
+        cv2.imshow("Imagen Camara Turtlebot3", I)
+        cv2.waitKey(1)
+
+        rate.sleep()
+
+    cv2.destroyAllWindows()
